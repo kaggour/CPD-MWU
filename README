@@ -1,0 +1,13 @@
+Welcome to PARAslice-Spark.
+
+PARAslice is a distributed algorithm for performing PARAFAC tensor decomposition by slicing the tensor along its largest mode and then operating on those slices in parallel.
+
+I hope you find the code useful.  I'm always open to thoughts and feedback.
+
+This code has two dependencies to be aware of:
+
+1) Numpy is used to represent tensors, matrices and for performing various operations on them. Your numpy instance may depend on another server-specific library such as BLAS or ATLAS, or both. Whatever you are using, you need to make sure that your numpy instance is using single-threaded instances of them. When the tensor slices get large enough ATLAS, for example, will automatically attempt to use multiple threads to perform matrix operations. This clashes with Spark, which limits the number of CPU's a single executor can use, and will cause the code to fail.
+
+2) TensorLy is a nice package of Python routines for dealing with tensors.  I use one or two functions from this package, so you need to make sure it is installed and in your path.
+	https://tensorly.github.io/
+
