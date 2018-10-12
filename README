@@ -1,8 +1,8 @@
-Welcome to PARAslice-Spark.
+Welcome to CPD-MWU (Canonical Polyadic Decomposition-Multiplicate Weight Updates).
 
-PARAslice is a distributed algorithm for performing PARAFAC tensor decomposition by slicing the tensor along its largest mode and then operating on those slices in parallel.
+CPD-MWU is a distributed algorithm for performing canonical polyadic decomposition of large dense tensors by slicing the tensor along its largest mode and then operating on those slices in parallel.
 
-I hope you find the code useful.  I'm always open to thoughts and feedback.
+CPD-MWU uses dynamic sketching to reduce the runtime of CPD, and for ill-conditioned tensors has the added benefit of reducing the relative decomposition error, as well.
 
 This code has two dependencies to be aware of:
 
