@@ -1,11 +1,13 @@
 #####################################################################
 #####################################################################
 #
-#                       PARAslice-Spark
+#                           iCPD
 #
-# A Parallel Factor Analysis (PARAFAC) Alternating Least Squares (ALS)
-# tensor decomposition implementation in Apache Spark for dense, skewed
-# tensors with 3 modes. Optionally supports regularization and/or sketching.
+# Dynamic sketching and regularization to accelerate Canonical
+# Polyadic Decomposition (CPD) of large dense tensors using
+# Multiplicative Weight Updates (MWU) to weigh different sketching
+# rate arm options. Sketching rate is selected at each iteration
+# using weighted sampling.
 #
 #    Kareem S. Aggour <aggour@ge.com>
 #
