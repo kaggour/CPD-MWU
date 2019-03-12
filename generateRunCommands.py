@@ -1,7 +1,7 @@
 #####################################################################
 #####################################################################
 #
-# Generate run commands to test PARAslice-Spark
+# Generate run commands to test CPD-MWU (and iCPD)
 #
 #    Kareem S. Aggour <aggour@ge.com>
 #
@@ -80,7 +80,7 @@ def main(argv):
 				filename = 'run-R' + str(r) + '-G' + str(g) + '-S' + str(s) + '-K' + str(k) + '-L' + str(l) + '-HDFS_' + hdfsDir + '-run_' + str(ru) + '.txt'
 				filename = filename.replace(" ", "")
 				realHDFS = '/user/aggour/rpi/spark/' + hdfsDir + '/'
-				print './submit.sh PARAslice.py -R',r,'-G',g,'-S',s,'-K',k,'-L',l,'-Sd',seed,'-I',realHDFS,'>',filename
+				print './submit.sh CPD-MWU.py -R',r,'-G',g,'-S',s,'-K',k,'-L',l,'-Sd',seed,'-I',realHDFS,'>',filename
 
 if __name__ == "__main__":
     main(sys.argv)
