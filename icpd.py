@@ -1,13 +1,11 @@
 #####################################################################
 #####################################################################
 #
-#                           iCPD
+#                       PARAslice-Spark
 #
-# Dynamic sketching and regularization to accelerate Canonical
-# Polyadic Decomposition (CPD) of large dense tensors using
-# Multiplicative Weight Updates (MWU) to weigh different sketching
-# rate arm options. Sketching rate is selected at each iteration
-# using weighted sampling.
+# A Parallel Factor Analysis (PARAFAC) Alternating Least Squares (ALS)
+# tensor decomposition implementation in Apache Spark for dense, skewed
+# tensors with 3 modes. Optionally supports regularization and/or sketching.
 #
 #    Kareem S. Aggour <aggour@ge.com>
 #
@@ -29,6 +27,7 @@ from lib import MultiplicativeWeight
 from tensorly.kruskal import kruskal_to_tensor
 from tensorly.tenalg import norm
 from tensorly.tenalg import khatri_rao
+from tensorly.tenalg import mode_dot
 from numpy.linalg import solve
 from tensorly.base import unfold, fold
 from scipy.linalg import hadamard
@@ -265,6 +264,35 @@ def calculateSketchingValues (sketchingRate):
     sketchingRows_P_cube_root = int(math.ceil(sketchingRows_P**(1.0/3)))
     return sketchingRows, sketchingRows_square_root, sketchingRows_P, sketchingRows_P_cube_root
 
+def realfft(n):
+    # https://github.com/rustandruin/NystromBestiary/blob/master/auxiliary/realfft.m
+    Afft = (1/math.sqrt(n))*scipy.linalg.dft(n)
+    if n % 2 == 1:
+        #realindices = range(2,int(math.ceil(n/2))+1)
+        #imagindices = range(int(math.ceil(n/2))+1,n)
+        realindices = range(1,int(math.ceil(n/2))+1)
+        imagindices = range(int(math.ceil(n/2))+1,n)
+        Afft[realindices, :] = math.sqrt(2)*Afft[realindices, :].real
+        Afft[imagindices, :] = math.sqrt(2)*Afft[imagindices, :].imag
+    else:
+        #realindices = range(2,int(n/2)+1)
+        #imagindices = range(int(n/2)+2,n)
+        realindices = range(1,int(n/2))
+        imagindices = range(int(n/2)+1,n)
+        Afft[realindices, :] = math.sqrt(2)*Afft[realindices, :].real
+        Afft[imagindices, :] = math.sqrt(2)*Afft[imagindices, :].imag
+    Afft = Afft.real
+    return Afft
+
+#vec = np.random.choice([-1.0,1.0],n); D = np.diag(vec); F = realfft(n); FD=np.matmul(F,D); np.matmul(FD, FD.T)
+def generateFD(n):
+    vec = np.random.choice([-1.0,1.0],n)
+    D = np.diag(vec)
+    #print D.shape
+    F = realfft(n)
+    #print F.shape
+    return np.matmul(F,D)
+
 def generateSRHT(r,n):
     vec = np.random.choice([-1.0,1.0],n)
     D = np.diag(vec)
@@ -315,15 +343,8 @@ def singleModeALSstep(X):
 #       if sketching == 1 or sketching == 3:
 #       if (decompMode < 3 and (sketching == 1 or sketching >= 3)) or (decompMode == 3 and 0 < errorCalcSketchingRate < 1) and not onUpdateWeightLoop:
         if (decompMode < 3 and (sketching == 1 or sketching >= 3) and sketchingRate < 1.0) or (decompMode == 3 and 0 < errorCalcSketchingRate < 1) and not onUpdateWeightLoop:
-	    if sketching == 15:
-		r = sketchingRate * K
-		M = generateSRHT(r,I*K)
-		Z = np.matmul(M, khatri_rao([Ci, A, B], skip_matrix=0))
-		ZiTZic = np.matmul(Z.T, Z)
-		XiZic = np.dot(np.matmul(unfold(Xi, 0), M.T), Z)
-	    else:
-		ZiTZic = tensorOps.ZTZ(A[sketchingRowsA,:], B[sketchingRowsB,:])
-		XiZic = np.dot(unfold(Xi[:,sketchingRowsA,:][:,:,sketchingRowsB], 0), khatri_rao([Ci, A[sketchingRowsA,:], B[sketchingRowsB,:]], skip_matrix=0))
+	    ZiTZic = tensorOps.ZTZ(A[sketchingRowsA,:], B[sketchingRowsB,:])
+	    XiZic = np.dot(unfold(Xi[:,sketchingRowsA,:][:,:,sketchingRowsB], 0), khatri_rao([Ci, A[sketchingRowsA,:], B[sketchingRowsB,:]], skip_matrix=0))
             '''
             if (decompMode == 3):
                 print 'Solving for partial C'
@@ -356,13 +377,7 @@ def singleModeALSstep(X):
 #       print 'new Ci=\n',Ci
         if decompMode == 1:
 #           if sketching == 1 or sketching >= 3:
-	    if sketching == 15:
-		r = sketchingRate * I
-		M = generateSRHT(r,J*K)
-		Z = np.matmul(M, khatri_rao([Ci, A, B], skip_matrix=1))
-		ZiTZi = ZiTZi + np.matmul(Z.T, Z)
-		XiZi = XiZi + np.dot(np.matmul(unfold(Xi, 1), M.T), Z)
-            elif (sketching == 1 or sketching >= 3) and sketchingRate < 1.0:
+            if (sketching == 1 or sketching >= 3) and sketchingRate < 1.0:
                 ZiTZi = ZiTZi + tensorOps.ZTZ(B[sketchingRowsB,:], Ci[selectRowsC,:])
                 XiZi = XiZi + np.dot(unfold(Xi[selectRowsC,:,:][:,:,sketchingRowsB], 1), khatri_rao([Ci[selectRowsC,:], A, B[sketchingRowsB,:]], skip_matrix=1))
             elif sketching == 2:
@@ -374,13 +389,7 @@ def singleModeALSstep(X):
                 XiZi = XiZi + np.dot(unfold(Xi, 1), khatri_rao([Ci, A, B], skip_matrix=1))
         elif decompMode == 2:
 #           if sketching == 1 or sketching >= 3:
-	    if sketching == 15:
-		r = sketchingRate * J
-		M = generateSRHT(r,I*K)
-		Z = np.matmul(M, khatri_rao([Ci, A, B], skip_matrix=2))
-		ZiTZi = ZiTZi + np.matmul(Z.T, Z)
-		XiZi = XiZi + np.dot(np.matmul(unfold(Xi, 2), M.T), Z)
-            elif (sketching == 1 or sketching >= 3) and sketchingRate < 1.0:
+            if (sketching == 1 or sketching >= 3) and sketchingRate < 1.0:
                 ZiTZi = ZiTZi + tensorOps.ZTZ(A[sketchingRowsA,:], Ci[selectRowsC,:])
                 XiZi = XiZi + np.dot(unfold(Xi[selectRowsC,:,:][:,sketchingRowsA,:], 2), khatri_rao([Ci[selectRowsC,:], A[sketchingRowsA,:], B], skip_matrix=2))
             elif sketching == 2:
@@ -613,7 +622,10 @@ def parafac_als(inputDir, outputDir, numExec, R, maxIter, minErrDelta, regulariz
         print '    Static sketching with dynamic regularization'
         print '    Sketching rate:',sketchingRate
     elif sketching==15:
-        print '    Subsampled Randomized Hadamard Transform (SRHT)'
+        print '    Tensor mixed with orthogonal (Fourier) transform and KR row norm weighted sampled'
+        print '    Sketching rate:',sketchingRate
+    elif sketching==16:
+        print '    Tensor mixed with orthogonal (Fourier) transform and KR randomly sampled'
         print '    Sketching rate:',sketchingRate
     if errorCalcSketchingRate > 0:
         print '    Error calc sketching rate:',errorCalcSketchingRate
@@ -626,7 +638,7 @@ def parafac_als(inputDir, outputDir, numExec, R, maxIter, minErrDelta, regulariz
     #print fullTensor
     (K,I,J) = fullTensor.shape
     # dalia
-    normX = tensorOps.calculateFNormX(fullTensor)
+    normX = np.square(tensorOps.calculateFNormXTensorly(fullTensor))
 
     # Do a first pass to get dimensions of slices to initialize A and B
     # also get the Frobenius norm of the tensor
@@ -706,8 +718,42 @@ def parafac_als(inputDir, outputDir, numExec, R, maxIter, minErrDelta, regulariz
 
     mapTime = 0.0
     errorTime = 0.0
-    startSteps = datetime.datetime.now()
     #maxExecTime = 0.0
+    startSteps = datetime.datetime.now()
+
+    # pre-mix tensor
+    FD1 = 0
+    FD2 = 0
+    FD3 = 0
+    #fullTensorOrig = fullTensor
+    if sketching in (15,16):
+	print 'Pre-mixing tensor'
+	print '  FD mode 1...'
+	#print I
+	FD1 = generateFD(I)
+	#print FD1.shape
+	fullTensor = mode_dot(fullTensor, FD1, 1)
+	print '  FD mode 2...'
+	#print J
+	FD2 = generateFD(J)
+	#print FD2.shape
+	fullTensor = mode_dot(fullTensor, FD2, 2)
+	print '  FD mode 3...'
+	#print K
+	FD3 = generateFD(K)
+	#print FD3.shape
+	fullTensor = mode_dot(fullTensor, FD3, 0)
+
+	'''
+	# test by unmixing tensor and checking difference
+	fullTensor2 = fullTensor
+	fullTensor2 = mode_dot(fullTensor2, FD3.T, 0)
+	fullTensor2 = mode_dot(fullTensor2, FD2.T, 2)
+	fullTensor2 = mode_dot(fullTensor2, FD1.T, 1)
+	diffNorm = np.square(tensorOps.calculateFNormXTensorly(np.subtract(fullTensor2, fullTensorOrig)))
+	print 'diffNorm =',diffNorm	
+	'''
+
     for step in range(0,maxIter):
         if sketching in (7,8,9,10,12,13,14):
             if sketching in (9,10,12,13) and onUpdateWeightLoop:
@@ -737,7 +783,7 @@ def parafac_als(inputDir, outputDir, numExec, R, maxIter, minErrDelta, regulariz
             #sketchingRowsA = np.unique(np.random.randint(0,I,numC))
             #sketchingRowsA = np.random.choice(I,numC,replace=False)
             sketchingRowsA = range(0,I)
-            if sketching in (10,11):
+            if sketching in (10,11,15):
                 # dalia - get weights of arms for B and C, then weighted select
                 sketchingRowsB = selectRowsNormWeighted(B, J, numB)
                 indexedRowNorms = rowNormCMatrix(fullTensor)
@@ -819,7 +865,7 @@ def parafac_als(inputDir, outputDir, numExec, R, maxIter, minErrDelta, regulariz
             #print 'numA=',numA
             #print 'numC=',numC
             sketchingRowsB = range(0,J)
-            if sketching in (10,11):
+            if sketching in (10,11,15):
                 # dalia - get weights of arms for A and C, then weighted select
                 sketchingRowsA = selectRowsNormWeighted(A, I, numA)
                 indexedRowNorms = rowNormCMatrix(fullTensor)
@@ -886,7 +932,7 @@ def parafac_als(inputDir, outputDir, numExec, R, maxIter, minErrDelta, regulariz
             numA = np.random.randint(2,min(errorCalcSketchingRows_P_cube_root, I))
             numB = np.random.randint(2,min(errorCalcSketchingRows_P_cube_root, J))
             numC = int(math.ceil(errorCalcSketchingRows_P/(numA*numB)))
-            if sketching in (10,11):
+            if sketching in (10,11,15):
                 # dalia - get weights of arms for A and B, then weighted select
                 sketchingRowsA = selectRowsNormWeighted(A, I, numA)
                 sketchingRowsB = selectRowsNormWeighted(B, J, numB)
@@ -1028,6 +1074,11 @@ def parafac_als(inputDir, outputDir, numExec, R, maxIter, minErrDelta, regulariz
     #errorRDD = tensorRDD.mapPartitions(saveFactorMatrices)
     #newError = np.sqrt(sums['error'] / normX)
 
+    # un-mix factor matrices
+    if sketching in (15,16):
+	A = np.matmul(FD1.T, A)
+	B = np.matmul(FD2.T, B)
+
     '''
     print '\n\nFinal Results:\n--------------'
     print 'A:\n--\n',A
@@ -1116,7 +1167,10 @@ def parafac_als(inputDir, outputDir, numExec, R, maxIter, minErrDelta, regulariz
         print '    Static sketching with dynamic regularization'
         print '    Sketching rate:',sketchingRate
     elif sketching==15:
-        print '    Subsampled Randomized Hadamard Transform (SRHT)'
+        print '    Tensor mixed with orthogonal (Fourier) transform and KR row norm weighted sampled'
+        print '    Sketching rate:',sketchingRate
+    elif sketching==16:
+        print '    Tensor mixed with orthogonal (Fourier) transform and KR randomly sampled'
         print '    Sketching rate:',sketchingRate
     print 'Error Calc sketching rate:',errorCalcSketchingRate
     print 'Final error:',newError
